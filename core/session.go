@@ -1,6 +1,7 @@
 package core
 
 import (
+	"sync"
 	"time"
 
 	"github.com/kgretzky/evilginx2/database"
@@ -28,6 +29,9 @@ type Session struct {
 	DoneSignal     chan struct{}
 	RemoteAddr     string
 	UserAgent      string
+	LastAccessed   time.Time
+	ExpiresAt      time.Time
+	lock           sync.RWMutex
 }
 
 func NewSession(name string) (*Session, error) {
@@ -52,6 +56,8 @@ func NewSession(name string) (*Session, error) {
 		DoneSignal:     make(chan struct{}),
 		RemoteAddr:     "",
 		UserAgent:      "",
+		LastAccessed:   time.Now().UTC(),
+		ExpiresAt:      time.Now().UTC().Add(24 * time.Hour),
 	}
 	s.CookieTokens = make(map[string]map[string]*database.CookieToken)
 
@@ -59,18 +65,27 @@ func NewSession(name string) (*Session, error) {
 }
 
 func (s *Session) SetUsername(username string) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	s.Username = username
 }
 
 func (s *Session) SetPassword(password string) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	s.Password = password
 }
 
 func (s *Session) SetCustom(name string, value string) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	s.Custom[name] = value
 }
 
 func (s *Session) AddCookieAuthToken(domain string, key string, value string, path string, http_only bool, expires time.Time) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
 	if _, ok := s.CookieTokens[domain]; !ok {
 		s.CookieTokens[domain] = make(map[string]*database.CookieToken)
 	}
@@ -87,10 +102,12 @@ func (s *Session) AddCookieAuthToken(domain string, key string, value string, pa
 			HttpOnly: http_only,
 		}
 	}
-
 }
 
 func (s *Session) AllCookieAuthTokensCaptured(authTokens map[string][]*CookieAuthToken) bool {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
 	tcopy := make(map[string][]CookieAuthToken)
 	for k, v := range authTokens {
 		tcopy[k] = []CookieAuthToken{}
@@ -130,6 +147,9 @@ func (s *Session) AllCookieAuthTokensCaptured(authTokens map[string][]*CookieAut
 }
 
 func (s *Session) Finish(is_auth_url bool) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
 	if !s.IsDone {
 		s.IsDone = true
 		s.IsAuthUrl = is_auth_url
